@@ -1,0 +1,86 @@
+#!/bin/bash
+ME=`basename $0`
+
+function print_help() {
+    echo "Скрипт для пакования->(разбития)->шифрования->заливки бэкапов"
+    echo
+    echo "Использование: $ME"
+    echo "Параметры:"
+    echo "  --path <path>		Папка/Файл для резервной копии"
+    echo "  --to <to>		Путь контейнер-папка на selectel"
+    echo "  -h			Справка."
+    echo
+}
+if [ $# = 0 ]; then
+    print_help
+fi
+while getopts ":p:t:h" opt ;
+do
+    case $opt in
+        p) _path=$OPTARG;
+            ;;
+        t) _to=$OPTARG;
+            ;;
+		h) print_help
+		;;
+        *) echo "Неправильный параметр";
+            echo "Для справки: $ME -h";
+            exit 1
+            ;;
+        esac
+done
+
+echo "=====================START backup script====================="
+_today=$(date +"%Y-%m-%d") # сегодняшний день 2015-04-23
+_path="${_path//"{TODAY}"/$_today}"
+_to="${_to//"{TODAY}"/$_today}"
+echo "today:	$_today"
+echo "path:	$_path"
+echo "to:	$_to"
+
+#если path пустой
+if [[ -z "$_path" ]]
+then
+_path="/home/backup/mysql/$_today"
+echo "path empty:	$_path"
+fi # дефолтный путь для папки бэкапирования
+
+
+_name=${_path##*/} # end(explode(/,path))
+_full_path=${_path:0:-${#_name}}
+cd $_full_path
+echo "name:	$_name"
+echo "full_path:	$_full_path"
+_archive_name=${_today}_${_name}.tar.gz
+echo "tar name:	$_archive_name"
+echo "-------------------------------"
+echo "> start tar"
+tar -zcpvf $_archive_name $_name; #пакуем
+echo "-------------------------------"
+echo "> start crypt"
+ccrypt -e -K "F%ds&*2610" $_archive_name #шифруем
+_crypt_name=$_archive_name.cpt
+let _filesize=$(stat -c%s $_archive_name.cpt)/1024/1024;
+echo "filesize:	$_filesize M";
+
+# filesize<5000M, supload не работает с 5Г+
+if [[ "$_filesize" -lt 5000 ]]
+then
+	_is_big=false
+	echo "-------------------------------"
+	echo "> start supload"
+	/usr/local/bin/supload -u *LOGIN* -k *PASSWORD* $_to $_crypt_name
+else
+	_is_big=true
+	let "_count_part=($_filesize+4999)/5000" #формулу нагуглил=ceil
+	echo "-------------------------------"
+	echo "> start split; count part: $_count_part"
+	split -d -b 5000M $_crypt_name $_crypt_name.split.
+	for file in $_crypt_name.split.* $file
+		do
+		echo "-------------------------------"
+		echo "> start supload"
+		/usr/local/bin/supload -u *LOGIN* -k *PASSWORD* $_to $file
+	done
+fi
+echo "=====================END backup script====================="
